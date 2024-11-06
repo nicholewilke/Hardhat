@@ -1,174 +1,37 @@
-#!/bin/sh
+#!/bin/bash
 
-# Fetch and execute the logo.sh script from your GitHub repository
-curl -s https://raw.githubusercontent.com/aMaheshr/nodes/main/logo.sh | bash
+# Define the repository URL
+REPO_URL="https://github.com/mmsbD71XeA/swisstronik"
 
-# Pause for 4 seconds
-sleep 4
+# Create a temporary directory to clone the repository
+TEMP_DIR=$(mktemp -d)
 
-sudo apt-get update && sudo apt get upgrade -y
-clear
+# Clone the repository into the temporary directory
+echo "Cloning the repository from $REPO_URL into a temporary directory..."
+git clone $REPO_URL "$TEMP_DIR"
 
-echo "Installing Hardhat and dotenv..."
-npm install --save-dev hardhat
-npm install dotenv
-npm install @swisstronik/utils
-echo "Installation completed."
+# Copy the contents of the cloned repository to the root of the Codespace
+echo "Copying the contents to the root directory..."
+cp -rT "$TEMP_DIR" .
 
-echo "Creating a Hardhat project..."
-npx hardhat
+# Remove the temporary directory
+rm -rf "$TEMP_DIR"
 
-rm -f contracts/Lock.sol
-echo "Lock.sol removed."
+# Install npm dependencies
+echo "Installing npm dependencies..."
+pnpm i
 
-echo "Hardhat project created."
-
-echo "Installing Hardhat toolbox..."
-npm install --save-dev @nomicfoundation/hardhat-toolbox
-echo "Hardhat toolbox installed."
-
-echo "Creating .env file..."
+# Prompt for the private key
 read -p "Enter your private key: " PRIVATE_KEY
-echo "PRIVATE_KEY=$PRIVATE_KEY" > .env
-echo ".env file created."
 
-echo "Configuring Hardhat..."
-cat <<EOL > hardhat.config.js
-require("@nomicfoundation/hardhat-toolbox");
-require("dotenv").config();
+# Update the .env file with the private key
+if [ -f .env ]; then
+  echo "Updating .env file with the provided private key..."
+  sed -i "s|PRIVATE_KEY=\"\"|PRIVATE_KEY=\"$PRIVATE_KEY\"|g" .env
+else
+  echo "PRIVATE_KEY=\"$PRIVATE_KEY\"" > .env
+  echo ".env file created and updated."
+fi
 
-module.exports = {
-  solidity: "0.8.19",
-  networks: {
-    swisstronik: {
-      url: "https://json-rpc.testnet.swisstronik.com/",
-      accounts: [\`0x\${process.env.PRIVATE_KEY}\`],
-    },
-  },
-};
-EOL
-echo "Hardhat configuration completed."
-
-echo "Creating Hello_swtr.sol contract..."
-mkdir -p contracts
-cat <<EOL > contracts/Hello_swtr.sol
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.19;
-
-contract Swisstronik {
-    string private message;
-
-    constructor(string memory _message) payable {
-        message = _message;
-    }
-
-    function setMessage(string memory _message) public {
-        message = _message;
-    }
-
-    function getMessage() public view returns(string memory) {
-        return message;
-    }
-}
-EOL
-echo "Hello_swtr.sol contract created."
-
-echo "Compiling the contract..."
-npx hardhat compile
-echo "Contract compiled."
-
-echo "Creating deploy.js script..."
-mkdir -p scripts
-cat <<EOL > scripts/deploy.js
-const hre = require("hardhat");
-
-async function main() {
-  const contract = await hre.ethers.deployContract("Swisstronik", ["Hello Swisstronik from CryptoCrocks!!"]);
-  await contract.waitForDeployment();
-  console.log(\`Swisstronik contract deployed to \${contract.target}\`);
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
-EOL
-echo "deploy.js script created."
-
-echo "Deploying the contract..."
-npx hardhat run scripts/deploy.js --network swisstronik
-echo "Contract deployed."
-
-echo "Creating setMessage.js script..."
-cat <<EOL > scripts/setMessage.js
-const hre = require("hardhat");
-const { encryptDataField, decryptNodeResponse } = require("@swisstronik/utils");
-
-const sendShieldedTransaction = async (signer, destination, data, value) => {
-  const rpclink = hre.network.config.url;
-  const [encryptedData] = await encryptDataField(rpclink, data);
-  return await signer.sendTransaction({
-    from: signer.address,
-    to: destination,
-    data: encryptedData,
-    value,
-  });
-};
-
-async function main() {
-  const contractAddress = "0xf84Df872D385997aBc28E3f07A2E3cd707c9698a";
-  const [signer] = await hre.ethers.getSigners();
-  const contractFactory = await hre.ethers.getContractFactory("Swisstronik");
-  const contract = contractFactory.attach(contractAddress);
-  const functionName = "setMessage";
-  const messageToSet = "Hello Swisstronik from CryptoCrocks!!";
-  const setMessageTx = await sendShieldedTransaction(signer, contractAddress, contract.interface.encodeFunctionData(functionName, [messageToSet]), 0);
-  await setMessageTx.wait();
-  console.log("Transaction Receipt: ", setMessageTx);
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
-EOL
-echo "setMessage.js script created."
-
-echo "Running setMessage.js..."
-npx hardhat run scripts/setMessage.js --network swisstronik
-echo "Message set."
-
-echo "Creating getMessage.js script..."
-cat <<EOL > scripts/getMessage.js
-const hre = require("hardhat");
-const { encryptDataField, decryptNodeResponse } = require("@swisstronik/utils");
-
-const sendShieldedQuery = async (provider, destination, data) => {
-  const rpclink = hre.network.config.url;
-  const [encryptedData, usedEncryptedKey] = await encryptDataField(rpclink, data);
-  const response = await provider.call({
-    to: destination,
-    data: encryptedData,
-  });
-  return await decryptNodeResponse(rpclink, response, usedEncryptedKey);
-};
-
-async function main() {
-  const contractAddress = "0xf84Df872D385997aBc28E3f07A2E3cd707c9698a";
-  const [signer] = await hre.ethers.getSigners();
-  const contractFactory = await hre.ethers.getContractFactory("Swisstronik");
-  const contract = contractFactory.attach(contractAddress);
-  const functionName = "getMessage";
-  const responseMessage = await sendShieldedQuery(signer.provider, contractAddress, contract.interface.encodeFunctionData(functionName));
-  console.log("Decoded response:", contract.interface.decodeFunctionResult(functionName, responseMessage)[0]);
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
-EOL
-
-npx hardhat run scripts/getMessage.js --network swisstronik
-
-echo " Follow: https://x.com/CryptoCrocks"
+# Run hardhat
+pnpm script ./scripts/script.ts
